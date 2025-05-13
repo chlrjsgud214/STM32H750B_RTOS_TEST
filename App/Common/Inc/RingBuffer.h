@@ -5,7 +5,7 @@
 #include "cmsis_os.h"
 
 
-#define RING_BUFFER_SIZE 4096
+#define RING_BUFFER_SIZE 8192
 #define MAX_BUFFER_COUNT 256
 
 #define HEAD 0

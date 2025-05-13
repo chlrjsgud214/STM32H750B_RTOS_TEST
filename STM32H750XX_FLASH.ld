@@ -178,6 +178,17 @@ SECTIONS
     _edata = .;        /* define a global symbol at data end */
   } >DTCMRAM AT> FLASH
 
+  .sram_d3 :
+  {
+    . = ALIGN(4);
+    _ssram_d3 = .;       /* create a global symbol at sram_d3 start */
+    *(.sram_d3)
+    *(.sram_d3*)
+    
+    . = ALIGN(4);
+    _esram_d3 = .;       /* create a global symbol at sram_d3 end */
+  } >RAM_D3 AT> FLASH
+    
 
   /* Uninitialized data section */
   . = ALIGN(4);
@@ -207,55 +218,13 @@ SECTIONS
   } >DTCMRAM
 
   /* D1 영역 RAM (AXI SRAM) 섹션 */
-  .RAM (NOLOAD) :
+  /* .RAM (NOLOAD) :
   {
     . = ALIGN(4);
     *(.RAM)
     *(.RAM*)
     . = ALIGN(4);
-  } >RAM
-
-  /* .RAM_D2 (NOLOAD) :
-  {
-    . = ALIGN(4);
-    *(.RAM_D2)
-    *(.RAM_D2*)
-    
-    . = ALIGN(8);
-    __ram_d2_task_stack_start = .;
-    . = . + __RAM_D2_TASK_STACK_SIZE__;
-    __ram_d2_task_stack_end = .;
-    
-    . = ALIGN(4);
-  } >RAM_D2
-
-  .RAM_D3 (NOLOAD) :
-  {
-    . = ALIGN(4);
-    *(.RAM_D3)
-    *(.RAM_D3*)
-    
-    . = ALIGN(8);
-    __ram_d3_task_stack_start = .;
-    . = . + __RAM_D3_TASK_STACK_SIZE__;
-    __ram_d3_task_stack_end = .;
-    
-    . = ALIGN(4);
-  } >RAM_D3
-
-  .ITCMRAM (NOLOAD) :
-  {
-    . = ALIGN(4);
-    *(.ITCMRAM)
-    *(.ITCMRAM*)
-    
-    . = ALIGN(8);
-    __itcm_task_stack_start = .;
-    . = . + __ITCM_TASK_STACK_SIZE__;
-    __itcm_task_stack_end = .;
-    
-    . = ALIGN(4);
-  } >ITCMRAM */
+  } >RAM */
 
   /* Remove information from the standard libraries */
   /DISCARD/ :

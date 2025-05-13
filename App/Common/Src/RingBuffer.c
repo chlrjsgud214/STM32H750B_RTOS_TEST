@@ -14,9 +14,7 @@ void Ring_buffer_init(RING_BUFFER *rb)
 int Ring_buffer_full(RING_BUFFER *rb)
 {
 	// 헤드와 테일의 차이가 RING_BUFFER_SIZE 이상이면 버퍼가 가득 찼음
-	return (rb->index[rb->head_index][HEAD] >= RING_BUFFER_SIZE - 1)
-			   ? 1
-			   : 0;
+	return (rb->index[rb->head_index][HEAD] >= (RING_BUFFER_SIZE - 1));
 }
 
 int Ring_buffer_empty(RING_BUFFER *rb)
@@ -158,7 +156,11 @@ int Ring_buffer_cut_packet(RING_BUFFER *rb)
 			// 인덱스 정보 복사
 			uint16_t head_value = rb->index[old_idx][HEAD] - rb->index[old_idx][TAIL];
 			uint16_t tail_value = 0;
-
+			for (uint16_t i = 0; i < MAX_BUFFER_COUNT; i++)
+			{
+				rb->index[i][HEAD] = 0;
+				rb->index[i][TAIL] = 0;
+			}
 			rb->index[new_idx][HEAD] = head_value;
 			rb->index[new_idx][TAIL] = tail_value;
 			rb->index[old_idx][HEAD] = 0;
