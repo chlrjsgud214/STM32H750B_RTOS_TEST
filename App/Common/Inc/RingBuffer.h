@@ -5,18 +5,22 @@
 #include "cmsis_os.h"
 
 
-#define RING_BUFFER_SIZE 8192
+#define RING_BUFFER_SIZE 4096
 #define MAX_BUFFER_COUNT 256
 
-#define HEAD 0
-#define TAIL 1
-
+#define INDEX 0
+#define LENGTH 1
+#define VALID 2
+#define USED 3
+#define OVERFLOW 4
 typedef struct
 {
     uint8_t buf[RING_BUFFER_SIZE];                // 버퍼 크기
-    volatile uint16_t index[MAX_BUFFER_COUNT][2]; // 인덱스 배열 0 : 헤드 인덱스, 1 : 테일 인덱스
-    volatile uint8_t head_index;                  // 추가된 버퍼 총 개수
-    volatile uint8_t tail_index;                  // 처리 완료된 인덱스
+    uint16_t buf_index;
+    volatile uint16_t index[MAX_BUFFER_COUNT][5]; // 인덱스 배열 0 : 헤드 인덱스, 1 : 테일 인덱스, 2 : 사용 여부 0-미사용, 1-사용, 3 : 유효 여부 0-유효, 1-유효
+    // volatile uint8_t head_index;                  // 추가된 버퍼 총 개수
+    // volatile uint8_t tail_index;                  // 처리 완료된 인덱스
+    volatile uint8_t ring_index
 } RING_BUFFER;
 
 typedef struct
