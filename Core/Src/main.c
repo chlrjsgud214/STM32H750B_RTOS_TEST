@@ -32,7 +32,7 @@ void StartUartTXTask(void *argument);
 void Start100msTask(void *argument);
 void Start500msTask(void *argument);
 void Start1000msTask(void *argument);
-uint32_t transmit_need_time(uint32_t tx_size);
+uint32_t transmit_need_tick(uint32_t tx_size);
 void print_task_stats(void);
 void print_runtime_stats(void);
 /* USER CODE END PTD */
@@ -138,6 +138,8 @@ uint32_t rx_buffer_cut_count = 0;
 uint8_t tx_buffer[1024];
 uint16_t tx_buffer_index = 0;
 
+char index_str[2048];
+
 /* 디버그 메시지 출력을 위한 플래그 */
 volatile uint8_t uart_busy = 0;
 volatile uint8_t tx_ready = 0; // TX 태스크 준비 상태 플래그
@@ -176,7 +178,7 @@ void Start100msTask(void *argument);
 void Start500msTask(void *argument);
 void Start1000msTask(void *argument);
 void StartTaskMonitor(void *argument);
-uint32_t transmit_need_time(uint32_t tx_size);
+uint32_t transmit_need_tick(uint32_t tx_size);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -343,23 +345,23 @@ int main(void)
     print_uart("ERROR: task1ms creation failed\r\n");
   }
 
-  task100msHandle = osThreadNew(Start100msTask, NULL, &task100ms_attributes);
-  if (task100msHandle == NULL)
-  {
-    print_uart("ERROR: task100ms creation failed\r\n");
-  }
+  // task100msHandle = osThreadNew(Start100msTask, NULL, &task100ms_attributes);
+  // if (task100msHandle == NULL)
+  // {
+  //   print_uart("ERROR: task100ms creation failed\r\n");
+  // }
 
-  task500msHandle = osThreadNew(Start500msTask, NULL, &task500ms_attributes);
-  if (task500msHandle == NULL)
-  {
-    print_uart("ERROR: task500ms creation failed\r\n");
-  }
+  // task500msHandle = osThreadNew(Start500msTask, NULL, &task500ms_attributes);
+  // if (task500msHandle == NULL)
+  // {
+  //   print_uart("ERROR: task500ms creation failed\r\n");
+  // }
 
-  task1000msHandle = osThreadNew(Start1000msTask, NULL, &task1000ms_attributes);
-  if (task1000msHandle == NULL)
-  {
-    print_uart("ERROR: task1000ms creation failed\r\n");
-  }
+  // task1000msHandle = osThreadNew(Start1000msTask, NULL, &task1000ms_attributes);
+  // if (task1000msHandle == NULL)
+  // {
+  //   print_uart("ERROR: task1000ms creation failed\r\n");
+  // }
 
   // taskMonitorHandle = osThreadNew(StartTaskMonitor, NULL, &taskMonitor_attributes);
   // if (taskMonitorHandle == NULL)
@@ -1128,7 +1130,7 @@ void Start1msTask(void *argument __attribute__((unused)))
       osEventFlagsClear(EventFlagsHandle, EVENT_FLAG_UART_RX_BUFFER_OVERFLOW);
       print_uart("\r\n!! Buffer Overflow Reset !!\r\n");
     }
-    
+
     // 버퍼 정리 작업 (3개 이상의 패킷이 쌓였을 때)
     if (rx_ring_buffer.tail_index > 3)
     {
@@ -1137,8 +1139,7 @@ void Start1msTask(void *argument __attribute__((unused)))
         rx_buffer_cut_count++;
       osMutexRelease(UartTxMutexHandle);
     }
-    
-    vTaskDelay(1); // 1ms = 1 Tick (configTICK_RATE_HZ = 1000 기준)
+    vTaskDelay(1 * portTICK_PERIOD_MS); // 1ms = 1 Tick (configTICK_RATE_HZ = 1000 기준)
   }
   /* USER CODE END 5 */
 }
@@ -1216,7 +1217,7 @@ void StartUartRXTask(void *argument __attribute__((unused)))
       }
       osSemaphoreAcquire(UartRxSemaphoreHandle, osWaitForever);
     }
-    vTaskDelay(1); // 1ms = 100Tick
+    vTaskDelay(5); // 1ms = 100Tick
   }
   /* USER CODE END 5 */
 }
@@ -1236,7 +1237,6 @@ void StartUartTXTask(void *argument __attribute__((unused)))
     if ((EventFlagsHandle_value & EVENT_FLAG_UART_TX_DATA_READY) && tx_buffer_index > 0)
     {
       tx_task_count++;
-      char index_str[2048];
 
       osMutexAcquire(UartTxMutexHandle, osWaitForever);
       sprintf(index_str, "[%ld:%ld-%ld]%.*s", rx_task_count, tx_task_count, rx_buffer_cut_count, tx_buffer_index, tx_buffer);
@@ -1246,30 +1246,37 @@ void StartUartTXTask(void *argument __attribute__((unused)))
       HAL_UART_Transmit(&huart3, (uint8_t *)index_str, strlen(index_str), 1000);
       osEventFlagsClear(EventFlagsHandle, EVENT_FLAG_UART_TX_DATA_READY);
       tx_buffer_index = 0;
-      vTaskDelay(transmit_need_time(strlen(index_str)) * portTICK_PERIOD_MS);
-    }else if(EventFlagsHandle_value & EVENT_FLAG_UART_TX_DATA_READY){
+      vTaskDelay(transmit_need_tick(strlen(index_str)));
+    }
+    else if (EventFlagsHandle_value & EVENT_FLAG_UART_TX_DATA_READY)
+    {
       // 플래그가 값이 있지만 버퍼가 비어있는 경우 리셋
       osEventFlagsClear(EventFlagsHandle, EVENT_FLAG_UART_TX_DATA_READY);
     }
-    vTaskDelay(5);
+    vTaskDelay(1);
   }
   /* USER CODE END 5 */
 }
 
-uint32_t transmit_need_time(uint32_t tx_size)
+uint32_t transmit_need_tick(uint32_t tx_size)
 {
-  // 921600 baud rate, 8 bits per byte = 전송 속도 계산 
-  // tx_size * 8 bits per byte / 921600 bits per second * 1000 ms per second = tx_size * 8 * 1000 / 921600 ms
-  uint32_t delay_time = (uint32_t)((((float)tx_size * 8 * 1000) / 921600));
+  /**
+   * 921600 baud rate, 8 bits per byte = 전송 속도 계산
+   * tx_size * 8 bits per byte / 921600 bits per second * 1000 ms per second = tx_size * 8 * 1000 / 921600 ms
+   *
+   * tx_size * 8 * 1000 * 100
+   * length * bit * 1s * rtos clock
+   */
+  uint32_t delay_time = (uint32_t)((((float)tx_size * 8 * 1000 * 100) / 921600));
 
-  /* 최소 1ms, 최대 100ms 지연 시간 보장 */
+  /* 최소 1tick, 최대 100tick 지연 시간 보장 */
   if (delay_time < 1)
   {
     delay_time = 1;
   }
-  else if (delay_time > 100)
+  else if (delay_time > (100 * 100))
   {
-    delay_time = 100;
+    delay_time = 100 * 100;
   }
 
   /* ticks = ms (configTICK_RATE_HZ = 1000 기준) */

@@ -71,7 +71,7 @@ not need to be guarded with a critical section. */
 
 /* Architecture specifics. */
 #define portSTACK_GROWTH (-1)
-#define portTICK_PERIOD_MS ((TickType_t)(10000 / (configTICK_RATE_HZ / 10))) // 100khz 1000000Tick
+#define portTICK_PERIOD_MS ((TickType_t)(100000 / (configTICK_RATE_HZ / 100))) // 100khz 1000000Tick
 #define portBYTE_ALIGNMENT 8
 /*-----------------------------------------------------------*/
 
