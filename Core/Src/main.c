@@ -198,9 +198,12 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
     /* 버퍼 오버플로우 방지 */
     if (Ring_buffer_full(&rx_ring_buffer) == 0)
     {
-      Ring_buffer_put(&rx_ring_buffer, rx_data);
+      if (rx_data != '\n' || rx_data != '\r')
+      {
+        Ring_buffer_put(&rx_ring_buffer, rx_data);
+      }
 
-      if (rx_data == '\n' || rx_data == '\r')
+      if (rx_data == '\n')
       {
         if (Ring_buffer_next(&rx_ring_buffer) == 0) // Ring_buffer_next의 반환값 확인
         {
@@ -1132,7 +1135,7 @@ void Start1msTask(void *argument __attribute__((unused)))
     }
 
     // 버퍼 정리 작업 (3개 이상의 패킷이 쌓였을 때)
-    if (rx_ring_buffer.tail_index > 3 || Ring_buffer_usage(&rx_ring_buffer) > (RING_BUFFER_SIZE * 0.1))
+    if ((rx_ring_buffer.tail_index > 10 || Ring_buffer_usage(&rx_ring_buffer) > (RING_BUFFER_SIZE * 0.2)))
     {
       osMutexAcquire(UartTxMutexHandle, osWaitForever);
       if (Ring_buffer_cut_packet(&rx_ring_buffer))
@@ -1240,10 +1243,10 @@ void StartUartTXTask(void *argument __attribute__((unused)))
 
       osMutexAcquire(UartTxMutexHandle, osWaitForever);
       sprintf(index_str, "[%ld:%ld-%ld]%.*s", rx_task_count, tx_task_count, rx_buffer_cut_count, tx_buffer_index, tx_buffer);
-      osMutexRelease(UartTxMutexHandle);
-
       /* tx_buffer의 내용을 tx_buffer_index 길이만큼 전송 */
       HAL_UART_Transmit(&huart3, (uint8_t *)index_str, strlen(index_str), 1000);
+
+      osMutexRelease(UartTxMutexHandle);
       osEventFlagsClear(EventFlagsHandle, EVENT_FLAG_UART_TX_DATA_READY);
       tx_buffer_index = 0;
       vTaskDelay(transmit_need_tick(strlen(index_str)));

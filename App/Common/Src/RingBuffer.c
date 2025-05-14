@@ -115,15 +115,15 @@ int Ring_buffer_cut_packet(RING_BUFFER *rb)
 
 		if (rb->tail_index != rb->head_index)
 		{
-			memcpy(rb->buf,
-				   &rb->buf[buf_start],
-				   buf_size);
+			// memcpy(rb->buf,
+			// 	   &rb->buf[buf_start],
+			// 	   buf_size);
 			// memset(rb->buf, 0, RING_BUFFER_SIZE);
 			// memcpy(rb->buf, temp_buf, buf_size);
 		}
 		else
 		{
-			memset(rb->buf, 0, rb->index[rb->head_index][HEAD]);
+			// memset(rb->buf, 0, rb->index[rb->head_index][HEAD]);
 		}
 
 		// 인덱스 처리

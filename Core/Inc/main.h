@@ -176,6 +176,7 @@ extern "C"
 #define EVENT_FLAG_UART_TX_DATA_READY (1 << 1)
 #define EVENT_FLAG_SYSTEM_RESET       (1 << 2)
 #define EVENT_FLAG_UART_RX_BUFFER_OVERFLOW (1 << 3)
+#define EVENT_FLAG_BUFFER_CUT_ENABLE (1 << 4)
 
 #define IDLE_TASK_STACK_SIZE (128 * 4) // Stack은 word(4byte) 단위로 계산
 #define TmrSvc_TASK_STACK_SIZE (256 * 4)
