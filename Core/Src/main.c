@@ -1132,7 +1132,7 @@ void Start1msTask(void *argument __attribute__((unused)))
     }
 
     // 버퍼 정리 작업 (3개 이상의 패킷이 쌓였을 때)
-    if (rx_ring_buffer.tail_index > 3)
+    if (rx_ring_buffer.tail_index > 3 || Ring_buffer_usage(&rx_ring_buffer) > (RING_BUFFER_SIZE * 0.1))
     {
       osMutexAcquire(UartTxMutexHandle, osWaitForever);
       if (Ring_buffer_cut_packet(&rx_ring_buffer))

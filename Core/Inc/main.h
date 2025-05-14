@@ -181,7 +181,7 @@ extern "C"
 #define TmrSvc_TASK_STACK_SIZE (256 * 4)
 
 #define UART_RX_TASK_STACK_SIZE (512 * 4)
-#define UART_TX_TASK_STACK_SIZE (1024 * 4)
+#define UART_TX_TASK_STACK_SIZE (512 * 4)
 #define TASK_1MS_STACK_SIZE (256 * 4)
 #define TASK_100MS_STACK_SIZE (256 * 4)
 #define TASK_500MS_STACK_SIZE (128 * 4)
