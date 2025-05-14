@@ -2,6 +2,9 @@
 
 void Ring_buffer_init(RING_BUFFER *rb)
 {
+	// 버퍼 내용 초기화
+	memset(rb->buf, 0, RING_BUFFER_SIZE);
+	
 	for (int i = 0; i < MAX_BUFFER_COUNT; i++)
 	{
 		rb->index[i][0] = 0;

@@ -32,7 +32,6 @@ void StartUartTXTask(void *argument);
 void Start100msTask(void *argument);
 void Start500msTask(void *argument);
 void Start1000msTask(void *argument);
-void StartTaskMonitor(void *argument);
 uint32_t transmit_need_time(uint32_t tx_size);
 void print_task_stats(void);
 void print_runtime_stats(void);
@@ -76,6 +75,13 @@ const osThreadAttr_t uartTXTask_attributes = {
     .priority = (osPriority_t)osPriorityNormal,
 };
 
+osThreadId_t task1msHandle;
+const osThreadAttr_t task1ms_attributes = {
+    .name = "task1ms",
+    .stack_size = TASK_1MS_STACK_SIZE,
+    .priority = (osPriority_t)osPriorityHigh,
+};
+
 osThreadId_t task100msHandle;
 const osThreadAttr_t task100ms_attributes = {
     .name = "task100ms",
@@ -87,37 +93,19 @@ osThreadId_t task500msHandle;
 const osThreadAttr_t task500ms_attributes = {
     .name = "task500ms",
     .stack_size = TASK_500MS_STACK_SIZE,
-    .priority = (osPriority_t)osPriorityNormal,
+    .priority = (osPriority_t)osPriorityHigh,
 };
 
 osThreadId_t task1000msHandle;
 const osThreadAttr_t task1000ms_attributes = {
     .name = "task1000ms",
     .stack_size = TASK_1000MS_STACK_SIZE,
-    .priority = (osPriority_t)osPriorityNormal,
-};
-
-osThreadId_t taskMonitorHandle;
-const osThreadAttr_t taskMonitor_attributes = {
-    .name = "taskMonitor",
-    .stack_size = TASK_MONITOR_STACK_SIZE,
-    .priority = (osPriority_t)osPriorityAboveNormal,
-};
-
-osMutexId_t MutexHandle;
-const osMutexAttr_t MutexHandle_attributes = {
-    .name = "TestMutex",
+    .priority = (osPriority_t)osPriorityHigh,
 };
 
 osMutexId_t UartTxMutexHandle;
 const osMutexAttr_t UartTxMutexHandle_attributes = {
     .name = "UartTxMutex",
-    .attr_bits = osMutexPrioInherit,
-};
-
-osMutexId_t TaskMonitorMutexHandle;
-const osMutexAttr_t TaskMonitorMutexHandle_attributes = {
-    .name = "TaskMonitorMutex",
     .attr_bits = osMutexPrioInherit,
 };
 
@@ -183,6 +171,7 @@ static void MX_USART1_UART_Init(void);
 
 void StartUartRXTask(void *argument);
 void StartUartTXTask(void *argument);
+void Start1msTask(void *argument);
 void Start100msTask(void *argument);
 void Start500msTask(void *argument);
 void Start1000msTask(void *argument);
@@ -200,40 +189,6 @@ int _write(int fd __attribute__((unused)), const char *ptr, int len)
   return len;
 }
 
-/**
- * @brief 모든 FreeRTOS 태스크의 상태를 출력
- * @param None
- * @retval None
- */
-void print_task_stats(void)
-{
-  char buffer[512];
-  vTaskList(buffer);
-
-  print_uart("\r\n=== Task Status ===\r\n");
-  print_uart("Name          State  Priority  Stack   Num\r\n");
-  print_uart("-----------------------------------\r\n");
-  print_uart(buffer);
-  print_uart("\r\n");
-}
-
-/**
- * @brief 모든 FreeRTOS 태스크의 CPU 사용량을 출력
- * @param None
- * @retval None
- */
-void print_runtime_stats(void)
-{
-  char buffer[512];
-  vTaskGetRunTimeStats(buffer);
-
-  print_uart("\r\n=== Task Runtime Stats ===\r\n");
-  print_uart("Name          Abs Time      % Time\r\n");
-  print_uart("-----------------------------------\r\n");
-  print_uart(buffer);
-  print_uart("\r\n");
-}
-
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
   if (huart->Instance == USART3)
@@ -245,22 +200,21 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 
       if (rx_data == '\n' || rx_data == '\r')
       {
-        Ring_buffer_next(&rx_ring_buffer);
-
-        /* 수신 완료 플래그 설정 */
-        osSemaphoreRelease(UartRxSemaphoreHandle);
+        if (Ring_buffer_next(&rx_ring_buffer) == 0) // Ring_buffer_next의 반환값 확인
+        {
+          /* 수신 완료 플래그 설정 */
+          osSemaphoreRelease(UartRxSemaphoreHandle);
+        }
+        else
+        {
+          // Ring buffer가 가득 찬 경우, 오버플로우 이벤트 설정
+          osEventFlagsSet(EventFlagsHandle, EVENT_FLAG_UART_RX_BUFFER_OVERFLOW);
+        }
       }
     }
     else
     {
-      // 버퍼 오버플로우 발생 - 버퍼 초기화 및 로그 출력
-      Ring_buffer_init(&rx_ring_buffer);
-      rx_buffer_cut_count++;
-
-      // 버퍼 오버플로우 메시지 출력
-      char err_msg[64];
-      sprintf(err_msg, "\r\nBUFFER OVERFLOW! Reset buffer. Cut count: %ld\r\n", rx_buffer_cut_count);
-      HAL_UART_Transmit(&huart3, (uint8_t *)err_msg, strlen(err_msg), 500);
+      osEventFlagsSet(EventFlagsHandle, EVENT_FLAG_UART_RX_BUFFER_OVERFLOW);
     }
 
     /* 다음 문자 수신을 위한 인터럽트 설정 */
@@ -314,7 +268,14 @@ int main(void)
   HAL_Init();
 
   /* USER CODE BEGIN Init */
-
+  // 변수 초기화
+  memset(tx_buffer, 0, sizeof(tx_buffer));
+  tx_buffer_index = 0;
+  rx_task_count = 0;
+  tx_task_count = 0;
+  tx_ready = 0;
+  uart_busy = 0;
+  Ring_buffer_init(&rx_ring_buffer);
   /* USER CODE END Init */
 
   /* Configure the system clock */
@@ -338,26 +299,17 @@ int main(void)
   print_uart("\r\n\r\n=== STM32H750 RTOS TEST ===\r\n");
   print_uart("UART initialized at 921600 baud\r\n");
 
-  // 변수 초기화
-  memset(tx_buffer, 0, sizeof(tx_buffer));
-  tx_buffer_index = 0;
-  rx_task_count = 0;
-  tx_task_count = 0;
-  tx_ready = 0;
-  uart_busy = 0;
-  Ring_buffer_init(&rx_ring_buffer);
-
   /* USER CODE END 2 */
 
   /* Init scheduler */
   osKernelInitialize();
   /* USER CODE BEGIN RTOS_MUTEX */
   /* add mutexes, ... */
-  MutexHandle = osMutexNew(&MutexHandle_attributes);
   UartTxMutexHandle = osMutexNew(&UartTxMutexHandle_attributes);
   // TaskMonitorMutexHandle = osMutexNew(&TaskMonitorMutexHandle_attributes);
   EventFlagsHandle = osEventFlagsNew(&EventFlagsHandle_attributes);
   UartRxSemaphoreHandle = osSemaphoreNew(512, 0, NULL); // 512개의 스레드가 동시에 접근할 수 있음
+
   /* USER CODE END RTOS_MUTEX */
 
   /* USER CODE BEGIN RTOS_SEMAPHORES */
@@ -383,6 +335,12 @@ int main(void)
   if (uartTXTaskHandle == NULL)
   {
     print_uart("ERROR: uartTXTask creation failed\r\n");
+  }
+
+  task1msHandle = osThreadNew(Start1msTask, NULL, &task1ms_attributes);
+  if (task1msHandle == NULL)
+  {
+    print_uart("ERROR: task1ms creation failed\r\n");
   }
 
   task100msHandle = osThreadNew(Start100msTask, NULL, &task100ms_attributes);
@@ -513,7 +471,7 @@ static void MX_TIM2_Init(void)
   htim2.Instance = TIM2;
   htim2.Init.Prescaler = 0;
   htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim2.Init.Period = 480 - 1;
+  htim2.Init.Period = 400 - 1;
   htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim2.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
   if (HAL_TIM_Base_Init(&htim2) != HAL_OK)
@@ -1155,18 +1113,32 @@ void Start1msTask(void *argument __attribute__((unused)))
 {
   TickType_t lastWakeTime;
   lastWakeTime = xTaskGetTickCount();
+
+  UNUSED(lastWakeTime);
   /* USER CODE BEGIN 5 */
   /* Infinite loop */
   for (;;)
   {
-    if (Ring_buffer_usage(&rx_ring_buffer) > (RING_BUFFER_SIZE * 0.3))
+    // 버퍼 오버플로우 체크 및 처리
+    if (osEventFlagsGet(EventFlagsHandle) & EVENT_FLAG_UART_RX_BUFFER_OVERFLOW)
+    {
+      osMutexAcquire(UartTxMutexHandle, osWaitForever);
+      Ring_buffer_init(&rx_ring_buffer);
+      osMutexRelease(UartTxMutexHandle);
+      osEventFlagsClear(EventFlagsHandle, EVENT_FLAG_UART_RX_BUFFER_OVERFLOW);
+      print_uart("\r\n!! Buffer Overflow Reset !!\r\n");
+    }
+    
+    // 버퍼 정리 작업 (3개 이상의 패킷이 쌓였을 때)
+    if (rx_ring_buffer.tail_index > 3)
     {
       osMutexAcquire(UartTxMutexHandle, osWaitForever);
       if (Ring_buffer_cut_packet(&rx_ring_buffer))
         rx_buffer_cut_count++;
       osMutexRelease(UartTxMutexHandle);
     }
-    vTaskDelayUntil(&lastWakeTime, 1 * portTICK_PERIOD_MS); // 1ms = 10Tick
+    
+    vTaskDelay(1); // 1ms = 1 Tick (configTICK_RATE_HZ = 1000 기준)
   }
   /* USER CODE END 5 */
 }
@@ -1210,7 +1182,6 @@ void Start1000msTask(void *argument __attribute__((unused)))
   /* Infinite loop */
   for (;;)
   {
-    printf("Buffer cut count : %ld\r\n", rx_buffer_cut_count);
     vTaskDelayUntil(&lastWakeTime, 1000 * portTICK_PERIOD_MS);
   }
   /* USER CODE END 5 */
@@ -1229,25 +1200,23 @@ void StartUartRXTask(void *argument __attribute__((unused)))
     uint32_t count = osSemaphoreGetCount(UartRxSemaphoreHandle);
     if (count > 0 && !is_tx_flag)
     {
-      osMutexAcquire(UartTxMutexHandle, osWaitForever);
-
-      printf("run-%ld\r\n", count);
       uint16_t start, end;
       if (Ring_buffer_get_packet(&rx_ring_buffer, &start, &end) == 0)
       {
+        osMutexAcquire(UartTxMutexHandle, osWaitForever);
         tx_buffer_index = end - start;
         if (tx_buffer_index > 0)
         {
           memcpy(tx_buffer, rx_ring_buffer.buf + start, tx_buffer_index);
+
           rx_task_count++;
           osEventFlagsSet(EventFlagsHandle, EVENT_FLAG_UART_TX_DATA_READY);
         }
+        osMutexRelease(UartTxMutexHandle);
       }
       osSemaphoreAcquire(UartRxSemaphoreHandle, osWaitForever);
-
-      osMutexRelease(UartTxMutexHandle);
     }
-    vTaskDelay(50); // 1ms = 100Tick
+    vTaskDelay(1); // 1ms = 100Tick
   }
   /* USER CODE END 5 */
 }
@@ -1262,32 +1231,36 @@ void StartUartTXTask(void *argument __attribute__((unused)))
   for (;;)
   {
     // 이벤트 플래그 대기
-    uint32_t EventFlagsHandle_value = osEventFlagsWait(EventFlagsHandle, EVENT_FLAG_UART_TX_DATA_READY, osFlagsWaitAny, 1000);
+    uint32_t EventFlagsHandle_value = osEventFlagsGet(EventFlagsHandle);
 
     if ((EventFlagsHandle_value & EVENT_FLAG_UART_TX_DATA_READY) && tx_buffer_index > 0)
     {
-      osMutexAcquire(UartTxMutexHandle, osWaitForever);
       tx_task_count++;
-      char index_str[20];
+      char index_str[2048];
 
-      sprintf(index_str, "[%ld:%ld]", rx_task_count, tx_task_count);
-      HAL_UART_Transmit(&huart3, (uint8_t *)index_str, strlen(index_str), 1000);
-      vTaskDelay(transmit_need_time(strlen(index_str) + 10));
+      osMutexAcquire(UartTxMutexHandle, osWaitForever);
+      sprintf(index_str, "[%ld:%ld-%ld]%.*s", rx_task_count, tx_task_count, rx_buffer_cut_count, tx_buffer_index, tx_buffer);
+      osMutexRelease(UartTxMutexHandle);
+
       /* tx_buffer의 내용을 tx_buffer_index 길이만큼 전송 */
-      HAL_UART_Transmit(&huart3, tx_buffer, tx_buffer_index, 1000);
-      vTaskDelay(transmit_need_time(tx_buffer_index) + 50);
+      HAL_UART_Transmit(&huart3, (uint8_t *)index_str, strlen(index_str), 1000);
       osEventFlagsClear(EventFlagsHandle, EVENT_FLAG_UART_TX_DATA_READY);
       tx_buffer_index = 0;
-      osMutexRelease(UartTxMutexHandle);
+      vTaskDelay(transmit_need_time(strlen(index_str)) * portTICK_PERIOD_MS);
+    }else if(EventFlagsHandle_value & EVENT_FLAG_UART_TX_DATA_READY){
+      // 플래그가 값이 있지만 버퍼가 비어있는 경우 리셋
+      osEventFlagsClear(EventFlagsHandle, EVENT_FLAG_UART_TX_DATA_READY);
     }
-    vTaskDelay(1);
+    vTaskDelay(5);
   }
   /* USER CODE END 5 */
 }
 
 uint32_t transmit_need_time(uint32_t tx_size)
 {
-  uint32_t delay_time = (uint32_t)((((float)tx_size * 8 * 100000) / 921600) * 1);
+  // 921600 baud rate, 8 bits per byte = 전송 속도 계산 
+  // tx_size * 8 bits per byte / 921600 bits per second * 1000 ms per second = tx_size * 8 * 1000 / 921600 ms
+  uint32_t delay_time = (uint32_t)((((float)tx_size * 8 * 1000) / 921600));
 
   /* 최소 1ms, 최대 100ms 지연 시간 보장 */
   if (delay_time < 1)
@@ -1299,7 +1272,7 @@ uint32_t transmit_need_time(uint32_t tx_size)
     delay_time = 100;
   }
 
-  /* 충분한 전송 시간 확보 */
+  /* ticks = ms (configTICK_RATE_HZ = 1000 기준) */
   return delay_time;
 }
 

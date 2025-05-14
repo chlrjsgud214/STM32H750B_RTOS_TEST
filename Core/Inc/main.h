@@ -175,12 +175,14 @@ extern "C"
 #define EVENT_FLAG_UART_RX_DATA_READY (1 << 0)
 #define EVENT_FLAG_UART_TX_DATA_READY (1 << 1)
 #define EVENT_FLAG_SYSTEM_RESET       (1 << 2)
+#define EVENT_FLAG_UART_RX_BUFFER_OVERFLOW (1 << 3)
 
 #define IDLE_TASK_STACK_SIZE (128 * 4) // Stack은 word(4byte) 단위로 계산
 #define TmrSvc_TASK_STACK_SIZE (256 * 4)
 
 #define UART_RX_TASK_STACK_SIZE (512 * 4)
 #define UART_TX_TASK_STACK_SIZE (512 * 4)
+#define TASK_1MS_STACK_SIZE (256 * 4)
 #define TASK_100MS_STACK_SIZE (256 * 4)
 #define TASK_500MS_STACK_SIZE (128 * 4)
 #define TASK_1000MS_STACK_SIZE (128 * 4)
@@ -197,7 +199,8 @@ extern "C"
                              TASK_1000MS_STACK_SIZE +  \
                              TASK_MONITOR_STACK_SIZE + \
                              IDLE_TASK_STACK_SIZE +    \
-                             TmrSvc_TASK_STACK_SIZE
+                             TmrSvc_TASK_STACK_SIZE +  \
+                             TASK_1MS_STACK_SIZE
 
   /* USER CODE END Private defines */
 
