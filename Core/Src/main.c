@@ -138,21 +138,10 @@ uint32_t rx_buffer_cut_count = 0;
 uint8_t tx_buffer[1024];
 uint16_t tx_buffer_index = 0;
 
-char index_str[2048];
-
-/* 디버그 메시지 출력을 위한 플래그 */
-volatile uint8_t uart_busy = 0;
-volatile uint8_t tx_ready = 0; // TX 태스크 준비 상태 플래그
-
-/* 태스크 모니터링을 위한 변수 */
-volatile uint32_t task_last_run_time[6] = {0}; // 각 태스크의 마지막 실행 시간
-volatile uint8_t task_status[6] = {0};         // 각 태스크의 상태 (0: 정상, 1: 응답 없음)
-#define TASK_IDX_UART_RX 0
-#define TASK_IDX_UART_TX 1
-#define TASK_IDX_100MS 2
-#define TASK_IDX_500MS 3
-#define TASK_IDX_1000MS 4
-#define TASK_IDX_MONITOR 5
+char index_str[1084];
+/* USER CODE BEGIN 5 */
+uint8_t rx_buffer[1024] = {0}; // 버퍼 초기화
+uint16_t rx_buffer_length = 0;
 
 /* 문자열 출력을 위한 공통 함수 */
 void print_uart(const char *str)
@@ -195,31 +184,23 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
   if (huart->Instance == USART3)
   {
-    /* 버퍼 오버플로우 방지 */
-    if (Ring_buffer_full(&rx_ring_buffer) == 0)
-    {
-      Ring_buffer_put(&rx_ring_buffer, rx_data);
+    Ring_buffer_put(&rx_ring_buffer, rx_data);
 
-      if (rx_data == '\n' || rx_data == '\r')
+    // 개행 문자가 오면 패킷 완료로 처리
+    if (rx_data == '\n' || rx_data == '\r')
+    {
+      // 다음 패킷으로 이동
+      int index = Ring_buffer_next(&rx_ring_buffer);
+      if (index == -1)
       {
-        if (Ring_buffer_next(&rx_ring_buffer) == 0) // Ring_buffer_next의 반환값 확인
-        {
-          /* 수신 완료 플래그 설정 */
-          osSemaphoreRelease(UartRxSemaphoreHandle);
-        }
-        else
-        {
-          // Ring buffer가 가득 찬 경우, 오버플로우 이벤트 설정
-          osEventFlagsSet(EventFlagsHandle, EVENT_FLAG_UART_RX_BUFFER_OVERFLOW);
-        }
+      }
+      else
+      {
+        osSemaphoreRelease(UartRxSemaphoreHandle);
       }
     }
-    else
-    {
-      osEventFlagsSet(EventFlagsHandle, EVENT_FLAG_UART_RX_BUFFER_OVERFLOW);
-    }
 
-    /* 다음 문자 수신을 위한 인터럽트 설정 */
+    // 다음 문자 수신을 위한 인터럽트 설정
     HAL_UART_Receive_IT(&huart3, (uint8_t *)&rx_data, 1);
   }
 }
@@ -228,7 +209,6 @@ void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart)
 {
   if (huart->Instance == USART3)
   {
-    uart_busy = 0;
   }
 }
 
@@ -261,7 +241,13 @@ int main(void)
 {
 
   /* USER CODE BEGIN 1 */
-
+  // 변수 초기화
+  memset(tx_buffer, 0, sizeof(tx_buffer));
+  memset(index_str, 0, sizeof(index_str));
+  tx_buffer_index = 0;
+  rx_task_count = 0;
+  tx_task_count = 0;
+  rx_buffer_cut_count = 0;
   /* USER CODE END 1 */
 
   /* MCU Configuration--------------------------------------------------------*/
@@ -270,13 +256,7 @@ int main(void)
   HAL_Init();
 
   /* USER CODE BEGIN Init */
-  // 변수 초기화
-  memset(tx_buffer, 0, sizeof(tx_buffer));
-  tx_buffer_index = 0;
-  rx_task_count = 0;
-  tx_task_count = 0;
-  tx_ready = 0;
-  uart_busy = 0;
+  // 링 버퍼 초기화
   Ring_buffer_init(&rx_ring_buffer);
   /* USER CODE END Init */
 
@@ -1115,31 +1095,13 @@ void Start1msTask(void *argument __attribute__((unused)))
 {
   TickType_t lastWakeTime;
   lastWakeTime = xTaskGetTickCount();
-
   UNUSED(lastWakeTime);
   /* USER CODE BEGIN 5 */
   /* Infinite loop */
   for (;;)
   {
-    // 버퍼 오버플로우 체크 및 처리
-    if (osEventFlagsGet(EventFlagsHandle) & EVENT_FLAG_UART_RX_BUFFER_OVERFLOW)
-    {
-      osMutexAcquire(UartTxMutexHandle, osWaitForever);
-      Ring_buffer_init(&rx_ring_buffer);
-      osMutexRelease(UartTxMutexHandle);
-      osEventFlagsClear(EventFlagsHandle, EVENT_FLAG_UART_RX_BUFFER_OVERFLOW);
-      print_uart("\r\n!! Buffer Overflow Reset !!\r\n");
-    }
-
-    // 버퍼 정리 작업 (3개 이상의 패킷이 쌓였을 때)
-    if (rx_ring_buffer.tail_index > 3 || Ring_buffer_usage(&rx_ring_buffer) > (RING_BUFFER_SIZE * 0.1))
-    {
-      osMutexAcquire(UartTxMutexHandle, osWaitForever);
-      if (Ring_buffer_cut_packet(&rx_ring_buffer))
-        rx_buffer_cut_count++;
-      osMutexRelease(UartTxMutexHandle);
-    }
-    vTaskDelay(1 * portTICK_PERIOD_MS); // 1ms = 1 Tick (configTICK_RATE_HZ = 1000 기준)
+    // 1ms마다 실행
+    vTaskDelay(1);
   }
   /* USER CODE END 5 */
 }
@@ -1190,7 +1152,9 @@ void Start1000msTask(void *argument __attribute__((unused)))
 
 void StartUartRXTask(void *argument __attribute__((unused)))
 {
-  /* USER CODE BEGIN 5 */
+  TickType_t lastWakeTime;
+  lastWakeTime = xTaskGetTickCount();
+  UNUSED(lastWakeTime);
   /* 태스크 초기화 메시지 */
   print_uart("\r\nUART RX Task Started\r\n");
 
@@ -1199,31 +1163,42 @@ void StartUartRXTask(void *argument __attribute__((unused)))
   {
     bool is_tx_flag = osEventFlagsGet(EventFlagsHandle) & EVENT_FLAG_UART_TX_DATA_READY;
     uint32_t count = osSemaphoreGetCount(UartRxSemaphoreHandle);
+
     if (count > 0 && !is_tx_flag)
     {
-      uint16_t start, end;
-      if (Ring_buffer_get_packet(&rx_ring_buffer, &start, &end) == 0)
-      {
-        osMutexAcquire(UartTxMutexHandle, osWaitForever);
-        tx_buffer_index = end - start;
-        if (tx_buffer_index > 0)
-        {
-          memcpy(tx_buffer, rx_ring_buffer.buf + start, tx_buffer_index);
 
-          rx_task_count++;
-          osEventFlagsSet(EventFlagsHandle, EVENT_FLAG_UART_TX_DATA_READY);
-        }
-        osMutexRelease(UartTxMutexHandle);
+      // 뮤텍스로 링 버퍼 접근 보호
+      osMutexAcquire(UartTxMutexHandle, osWaitForever);
+
+      int result = Ring_buffer_get_packet(&rx_ring_buffer, rx_buffer, &rx_buffer_length);
+
+      if (result == 0 && rx_buffer_length > 0 && rx_buffer_length < RING_BUFFER_SIZE)
+      {
+        // 유효한 데이터가 있을 경우만 처리
+        tx_buffer_index = rx_buffer_length;
+        memcpy(tx_buffer, rx_buffer, tx_buffer_index);
+        rx_task_count++;
+        osSemaphoreAcquire(UartRxSemaphoreHandle, osWaitForever);
+        osEventFlagsSet(EventFlagsHandle, EVENT_FLAG_UART_TX_DATA_READY);
       }
-      osSemaphoreAcquire(UartRxSemaphoreHandle, osWaitForever);
+      else if (result == 0)
+      {
+        osSemaphoreAcquire(UartRxSemaphoreHandle, osWaitForever);
+      }
+
+      osMutexRelease(UartTxMutexHandle);
     }
-    vTaskDelay(5); // 1ms = 100Tick
+
+    vTaskDelay(1); // 5ms 지연
   }
   /* USER CODE END 5 */
 }
 
 void StartUartTXTask(void *argument __attribute__((unused)))
 {
+  TickType_t lastWakeTime;
+  lastWakeTime = xTaskGetTickCount();
+  UNUSED(lastWakeTime);
   /* USER CODE BEGIN 5 */
   /* 태스크 초기화 메시지 */
   print_uart("\r\nUART TX Task Started\r\n");
@@ -1232,27 +1207,38 @@ void StartUartTXTask(void *argument __attribute__((unused)))
   for (;;)
   {
     // 이벤트 플래그 대기
-    uint32_t EventFlagsHandle_value = osEventFlagsGet(EventFlagsHandle);
+    uint32_t EventFlagsHandle_value = osEventFlagsWait(EventFlagsHandle, EVENT_FLAG_UART_TX_DATA_READY, osFlagsWaitAny, 100);
 
     if ((EventFlagsHandle_value & EVENT_FLAG_UART_TX_DATA_READY) && tx_buffer_index > 0)
     {
+
+      // 뮤텍스로 버퍼 접근 보호
+      osMutexAcquire(UartTxMutexHandle, osWaitForever);
       tx_task_count++;
 
-      osMutexAcquire(UartTxMutexHandle, osWaitForever);
-      sprintf(index_str, "[%ld:%ld-%ld]%.*s", rx_task_count, tx_task_count, rx_buffer_cut_count, tx_buffer_index, tx_buffer);
+      // 안전한 버퍼 크기 확인
+      uint16_t safe_length = tx_buffer_index;
+      if (safe_length >= sizeof(index_str) - 50) // 헤더 문자열 공간 확보
+      {
+        safe_length = sizeof(index_str) - 50;
+      }
+
+      // 포맷 문자열 생성
+      snprintf(index_str, sizeof(index_str), "[%ld:%ld]%s", rx_task_count, tx_task_count, tx_buffer);
+
       osMutexRelease(UartTxMutexHandle);
 
-      /* tx_buffer의 내용을 tx_buffer_index 길이만큼 전송 */
+      // UART로 전송
       HAL_UART_Transmit(&huart3, (uint8_t *)index_str, strlen(index_str), 1000);
+      // 플래그 클리어 및 버퍼 인덱스 초기화
       osEventFlagsClear(EventFlagsHandle, EVENT_FLAG_UART_TX_DATA_READY);
       tx_buffer_index = 0;
-      vTaskDelay(transmit_need_tick(strlen(index_str)));
+
+      // 전송 완료 후 지연
+      uint32_t delay_ticks = transmit_need_tick(strlen(index_str));
+      vTaskDelay(delay_ticks > 0 ? delay_ticks : 1);
     }
-    else if (EventFlagsHandle_value & EVENT_FLAG_UART_TX_DATA_READY)
-    {
-      // 플래그가 값이 있지만 버퍼가 비어있는 경우 리셋
-      osEventFlagsClear(EventFlagsHandle, EVENT_FLAG_UART_TX_DATA_READY);
-    }
+
     vTaskDelay(1);
   }
   /* USER CODE END 5 */
@@ -1262,24 +1248,22 @@ uint32_t transmit_need_tick(uint32_t tx_size)
 {
   /**
    * 921600 baud rate, 8 bits per byte = 전송 속도 계산
-   * tx_size * 8 bits per byte / 921600 bits per second * 1000 ms per second = tx_size * 8 * 1000 / 921600 ms
-   *
-   * tx_size * 8 * 1000 * 100
-   * length * bit * 1s * rtos clock
+   * tx_size * 8 bits per byte / 921600 bits per second * 1000 ms per second = ms
    */
-  uint32_t delay_time = (uint32_t)((((float)tx_size * 8 * 1000 * 100) / 921600));
+  // 안전한 계산을 위해 오버플로우 방지
+  float ms_per_byte = 8.0f * 1000.0f * 100 / 921600.0f; // 약 0.0087ms/byte
+  uint32_t delay_time = (uint32_t)(tx_size * ms_per_byte);
 
   /* 최소 1tick, 최대 100tick 지연 시간 보장 */
   if (delay_time < 1)
   {
     delay_time = 1;
   }
-  else if (delay_time > (100 * 100))
+  else if (delay_time > 10000)
   {
-    delay_time = 100 * 100;
+    delay_time = 10000;
   }
 
-  /* ticks = ms (configTICK_RATE_HZ = 1000 기준) */
   return delay_time;
 }
 
